@@ -1,0 +1,220 @@
+# zombie_game.py
+
+from game_framework import Game
+import random
+import machine
+import time
+
+
+class ZombieGame(Game):
+    PLAYER_CHAR = "P"
+    END_CHAR = "E"
+    ZOMBIE_CHAR = "Z"
+    WALL_CHAR = "#"
+    EMPTY_CHAR = " "
+    DISABLE_BORDERS = True
+
+    def __init__(
+        self,
+        map_width=16,
+        map_height=8,
+        num_zombies=3,
+        num_walls=5,
+        zombie_move_period=1000,
+    ):
+        """
+        Initialize the Zombie Game with specific settings.
+
+        :param map_width: Width of the game map in cells.
+        :param map_height: Height of the game map in cells.
+        :param num_zombies: Number of zombies to place on the map.
+        :param num_walls: Number of internal walls/obstacles.
+        :param zombie_move_period: Period (in milliseconds) for zombie movements.
+        """
+        super().__init__(map_width, map_height, update_period=zombie_move_period)
+        self.player_pos = (self.map_height - 2, 1)
+        self.goal_pos = (1, self.map_width - 2)
+        self.zombies = []
+        self.num_zombies = num_zombies
+        self.num_walls = num_walls
+
+    def custom_randrange(self, a, b):
+        """
+        Custom randrange using random.getrandbits.
+
+        :param a: Start of range (inclusive).
+        :param b: End of range (exclusive).
+        :return: Random integer between a and b-1.
+        """
+        return a + (random.getrandbits(16) % (b - a))
+
+    def initialize_game(self):
+        """
+        Initialize the game state: map, player, goal, zombies, and walls.
+        """
+        self.init_map()
+        self.place_player()
+        self.place_goal()
+        self.place_zombies()
+        self.place_walls()
+        self.render()
+
+    def init_map(self):
+        """
+        Initialize the game map with empty spaces and borders.
+        """
+        self.game_map = [
+            [self.EMPTY_CHAR for _ in range(self.map_width)]
+            for _ in range(self.map_height)
+        ]
+        # Borders in the user area
+        if self.DISABLE_BORDERS:
+            for y in range(self.map_height):
+                self.game_map[y][0] = self.WALL_CHAR
+                self.game_map[y][self.map_width - 1] = self.WALL_CHAR
+            for x in range(self.map_width):
+                self.game_map[0][x] = self.WALL_CHAR
+                self.game_map[self.map_height - 1][x] = self.WALL_CHAR
+
+    def place_player(self):
+        """
+        Place the player character on the map.
+        """
+        y, x = self.player_pos
+        self.game_map[y][x] = self.PLAYER_CHAR
+
+    def place_goal(self):
+        """
+        Place the goal on the map.
+        """
+        y, x = self.goal_pos
+        self.game_map[y][x] = self.END_CHAR
+
+    def place_zombies(self):
+        """
+        Randomly place zombies on the map, avoiding the player and goal positions.
+        """
+        for _ in range(self.num_zombies):
+            while True:
+                y = self.custom_randrange(1, self.map_height - 1)
+                x = self.custom_randrange(1, self.map_width - 1)
+                if (
+                    self.game_map[y][x] == self.EMPTY_CHAR
+                    and (y, x) != self.player_pos
+                    and (y, x) != self.goal_pos
+                ):
+                    self.game_map[y][x] = self.ZOMBIE_CHAR
+                    self.zombies.append([y, x])
+                    break
+
+    def place_walls(self):
+        """
+        Randomly place internal walls/obstacles on the map.
+        """
+        for _ in range(self.num_walls):
+            while True:
+                y = self.custom_randrange(1, self.map_height - 1)
+                x = self.custom_randrange(1, self.map_width - 1)
+                if (
+                    self.game_map[y][x] == self.EMPTY_CHAR
+                    and (y, x) != self.player_pos
+                    and (y, x) != self.goal_pos
+                    and [y, x] not in self.zombies
+                ):
+                    self.game_map[y][x] = self.WALL_CHAR
+                    break
+
+    def handle_input(self, direction):
+        """
+        Handle player movement based on input direction.
+
+        :param direction: Direction input by the player
+        """
+        y, x = self.player_pos
+        new_y, new_x = y, x
+        if direction == "left":
+            new_x -= 1
+        elif direction == "right":
+            new_x += 1
+        elif direction == "up":
+            new_y -= 1
+        elif direction == "down":
+            new_y += 1
+
+        # Check boundaries and walls
+        if 0 < new_y < self.map_height - 1 and 0 < new_x < self.map_width - 1:
+            if self.game_map[new_y][new_x] in [self.EMPTY_CHAR, self.END_CHAR]:
+                self.game_map[y][x] = self.EMPTY_CHAR
+                if self.game_map[new_y][new_x] == self.END_CHAR:
+                    self.game_win_flag = True
+                self.player_pos = (new_y, new_x)
+                self.game_map[new_y][new_x] = self.PLAYER_CHAR
+
+    def update_state(self, timer):
+        """
+        Move zombies towards the player each timer tick.
+        """
+        new_zombies = []
+        for z in self.zombies:
+            y, x = z
+            dy = self.player_pos[0] - y
+            dx = self.player_pos[1] - x
+            move_y = dy // abs(dy) if dy != 0 else 0
+            move_x = dx // abs(dx) if dx != 0 else 0
+            new_y = y + move_y
+            new_x = x + move_x
+
+            # Check boundaries and walls
+            if not (0 < new_y < self.map_height - 1 and 0 < new_x < self.map_width - 1):
+                new_y, new_x = y, x  # Zombie stays
+            elif self.game_map[new_y][new_x] == self.WALL_CHAR:
+                new_y, new_x = y, x  # Zombie stays
+
+            # Check collision with player
+            if (new_y, new_x) == self.player_pos:
+                self.game_over_flag = True
+
+            # Update zombie position
+            if self.game_map[new_y][new_x] in [
+                self.EMPTY_CHAR,
+                self.PLAYER_CHAR,
+                self.END_CHAR,
+            ]:
+                self.game_map[y][x] = self.EMPTY_CHAR
+                if self.game_map[new_y][new_x] != self.END_CHAR:
+                    self.game_map[new_y][new_x] = self.ZOMBIE_CHAR
+                z[0], z[1] = new_y, new_x
+                new_zombies.append(z)
+            else:
+                new_zombies.append(z)
+        self.zombies = new_zombies
+        self.score += 1
+        self.render()
+
+    def render(self):
+        """
+        Render the current game state to the display.
+        """
+        self.display.update_display(self.game_map, self.score)
+
+    def game_over_screen(self):
+        """
+        Display the game over screen and reset the device after a delay.
+        """
+        self.display.clear()
+        self.display.draw_text("GAME OVER", 30, 20)
+        self.display.draw_text(f"Score: {self.score}", 30, 30)
+        self.display.show()
+        time.sleep(3)
+        machine.reset()
+
+    def game_win_screen(self):
+        """
+        Display the game win screen and reset the device after a delay.
+        """
+        self.display.clear()
+        self.display.draw_text("YOU WIN!", 35, 20)
+        self.display.draw_text(f"Score: {self.score}", 35, 30)
+        self.display.show()
+        time.sleep(3)
+        machine.reset()
